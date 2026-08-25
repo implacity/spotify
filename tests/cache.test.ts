@@ -152,3 +152,22 @@ describe('invalidate', () => {
     await expect(cache.invalidate('never-seen')).resolves.toBeUndefined();
   });
 });
+
+describe('cache directory configuration', () => {
+  it('treats an explicitly empty CACHE_DIR as "no disk tier"', async () => {
+    // str() folds '' back to the default, so this has to be read directly.
+    // Getting it wrong means CACHE_DIR='' silently keeps writing to .cache.
+    const { loadConfig } = await import('../src/config.js');
+    expect(loadConfig({ CACHE_DIR: '' } as NodeJS.ProcessEnv).cache.dir).toBe('');
+    expect(loadConfig({} as NodeJS.ProcessEnv).cache.dir).toBe('.cache');
+    expect(loadConfig({ CACHE_DIR: '/tmp/x' } as NodeJS.ProcessEnv).cache.dir).toBe('/tmp/x');
+  });
+
+  it('writes nothing to disk when the tier is off', async () => {
+    const { readdir } = await import('node:fs/promises');
+    const cache = new Cache({ maxEntries: 10, dir: '' });
+    await cache.set('k', 'v', 60);
+    // The temp dir for this test must stay untouched.
+    expect(await readdir(dir)).toEqual([]);
+  });
+});

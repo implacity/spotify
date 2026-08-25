@@ -3,6 +3,13 @@ export interface Config {
   host: string;
   /** Serve deterministic fixture data instead of calling Spotify. */
   mock: boolean;
+  /**
+   * Which backend supplies the catalogue.
+   * - `auto`    official Web API when credentials exist, else the web player
+   * - `official` documented API only (needs Premium on the app owner)
+   * - `partner`  web-player API only (no credentials, no Premium)
+   */
+  source: 'auto' | 'official' | 'partner';
   official: {
     clientId: string;
     clientSecret: string;
@@ -21,6 +28,8 @@ export interface Config {
     totpVersion: string;
     /** Manual overrides for persisted-query hashes, e.g. `{ queryArtistOverview: "ab12..." }`. */
     persistedQueries: Record<string, string>;
+    /** Pin an operation name per role, e.g. `{ search: "searchDesktop" }`. */
+    operations: Record<string, string>;
   };
   cache: {
     /** Seconds a fully-built artist catalogue stays fresh. */
@@ -78,7 +87,10 @@ function persistedQueriesFromEnv(env: Env): Record<string, string> {
 
 export function loadConfig(env: Env = process.env): Config {
   const mock = bool(env, 'MOCK', false);
+  const rawSource = str(env, 'SPOTIFY_SOURCE', 'auto').toLowerCase();
+  const source = rawSource === 'official' || rawSource === 'partner' ? rawSource : 'auto';
   return {
+    source,
     port: num(env, 'PORT', 3000),
     host: str(env, 'HOST', '0.0.0.0'),
     mock,
@@ -94,6 +106,12 @@ export function loadConfig(env: Env = process.env): Config {
       totpSecret: str(env, 'SPOTIFY_TOTP_SECRET'),
       totpVersion: str(env, 'SPOTIFY_TOTP_VERSION', '5'),
       persistedQueries: persistedQueriesFromEnv(env),
+      operations: {
+        artistOverview: str(env, 'SPOTIFY_OP_ARTISTOVERVIEW'),
+        album: str(env, 'SPOTIFY_OP_ALBUM'),
+        search: str(env, 'SPOTIFY_OP_SEARCH'),
+        discography: str(env, 'SPOTIFY_OP_DISCOGRAPHY'),
+      },
     },
     cache: {
       artistTtl: num(env, 'CACHE_ARTIST_TTL', 60 * 60 * 6),
@@ -101,7 +119,9 @@ export function loadConfig(env: Env = process.env): Config {
       // Entries are whole catalogues — megabytes each for a large artist — so
       // this is deliberately modest. The disk tier is the durable one.
       maxEntries: num(env, 'CACHE_MAX_ENTRIES', 64),
-      dir: str(env, 'CACHE_DIR', '.cache'),
+      // Explicitly empty means "no disk tier". str() would fold '' back to the
+      // default, which made CACHE_DIR='' silently keep caching to disk.
+      dir: env.CACHE_DIR === undefined ? '.cache' : env.CACHE_DIR.trim(),
     },
     limits: {
       concurrency: num(env, 'SPOTIFY_CONCURRENCY', 6),
@@ -115,6 +135,7 @@ export function loadConfig(env: Env = process.env): Config {
 export function describeConfig(config: Config): Record<string, unknown> {
   return {
     mock: config.mock,
+    source: config.source,
     market: config.official.market,
     officialCredentials: Boolean(config.official.clientId && config.official.clientSecret),
     partnerEnabled: config.partner.enabled,

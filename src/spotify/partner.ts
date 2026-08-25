@@ -4,6 +4,14 @@ import { createLogger } from '../util/logger.js';
 import { mapWithConcurrency } from '../util/limit.js';
 import { discoverPersistedQueries } from './persistedQueries.js';
 import { generateTotp } from './totp.js';
+import {
+  extractAlbums,
+  extractArtists,
+  extractTracks,
+  type PartnerAlbum,
+  type PartnerArtist,
+  type PartnerTrack,
+} from './partnerEntities.js';
 
 const log = createLogger('partner');
 
@@ -16,11 +24,29 @@ const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) ' +
   'Chrome/122.0.0.0 Safari/537.36';
 
-/** Operations we need; discovery stops as soon as all of these are resolved. */
-export const OPERATIONS = {
-  artistOverview: 'queryArtistOverview',
-  album: 'getAlbum',
+/**
+ * Operations we need, each with fallback spellings.
+ *
+ * Spotify renames these between player releases (`searchDesktop` became
+ * `searchArtists`, discography queries have several variants), so each entry
+ * is a candidate list: the first name with a resolvable persisted-query hash
+ * wins. Any can be pinned with SPOTIFY_OP_<KEY>.
+ */
+export const OPERATION_CANDIDATES = {
+  artistOverview: ['queryArtistOverview', 'queryArtistOverviewV2', 'getArtistOverview'],
+  album: ['getAlbum', 'queryAlbumTracks', 'getAlbumTracks'],
+  search: ['searchArtists', 'searchDesktop', 'searchQuery'],
+  discography: [
+    'queryArtistDiscographyAll',
+    'queryArtistDiscographyOverview',
+    'queryArtistAlbums',
+  ],
 } as const;
+
+export type OperationKey = keyof typeof OPERATION_CANDIDATES;
+
+/** Flat list of every operation name we might need, for discovery. */
+const ALL_OPERATION_NAMES: string[] = Object.values(OPERATION_CANDIDATES).flat();
 
 export interface PartnerToken {
   accessToken: string;
@@ -50,6 +76,15 @@ interface TokenResponse {
   accessTokenExpirationTimestampMs?: number;
   expires_in?: number;
   isAnonymous?: boolean;
+}
+
+/** Lower-case every key so env overrides and camelCase names meet. */
+function normaliseHashKeys(source: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value) out[key.toLowerCase()] = value;
+  }
+  return out;
 }
 
 const trackIdFromUri = (uri: string): string | null => {
@@ -162,7 +197,18 @@ export class PartnerClient {
   private lastFailure: string | null = null;
 
   constructor(private readonly config: Config) {
-    this.hashes = { ...config.partner.persistedQueries };
+    this.hashes = normaliseHashKeys(config.partner.persistedQueries);
+  }
+
+  /**
+   * Hashes are looked up case-insensitively.
+   *
+   * Overrides arrive as env vars (`SPOTIFY_PQ_GETALBUM`) which are uppercase
+   * by convention, while operation names are camelCase (`getAlbum`). Keying
+   * both on lower case is what makes the documented override actually apply.
+   */
+  private storedHash(operation: string): string | undefined {
+    return this.hashes[operation.toLowerCase()];
   }
 
   get enabled(): boolean {
@@ -317,27 +363,57 @@ export class PartnerClient {
     }
   }
 
-  private async hashFor(operation: string): Promise<string> {
-    const known = this.hashes[operation];
-    if (known) return known;
+  /**
+   * Resolve a candidate list to the first operation name we have a hash for,
+   * so a Spotify rename falls through to the next spelling instead of failing.
+   */
+  private async resolveOperation(key: OperationKey): Promise<string> {
+    const pinned = this.config.partner.operations[key];
+    const candidates = pinned ? [pinned, ...OPERATION_CANDIDATES[key]] : [...OPERATION_CANDIDATES[key]];
 
+    for (const name of candidates) {
+      if (this.storedHash(name)) return name;
+    }
+
+    await this.discoverHashes();
+    for (const name of candidates) {
+      if (this.storedHash(name)) return name;
+    }
+
+    throw new PartnerUnavailableError(
+      `no persisted-query hash for any of: ${candidates.join(', ')}. Pin one with ` +
+        `SPOTIFY_PQ_${candidates[0]!.toUpperCase()}=<sha256>, copied from a pathfinder ` +
+        'request in your browser devtools.',
+    );
+  }
+
+  private async discoverHashes(): Promise<void> {
     if (!this.hashDiscovery) {
       this.hashDiscovery = discoverPersistedQueries({
         timeoutMs: this.config.limits.requestTimeoutMs,
         concurrency: this.config.limits.concurrency,
-        wanted: Object.values(OPERATIONS),
+        wanted: ALL_OPERATION_NAMES,
         userAgent: USER_AGENT,
       }).catch((error) => {
         log.warn('persisted-query discovery failed', (error as Error).message);
         return {} as Record<string, string>;
       });
     }
-
     const discovered = await this.hashDiscovery;
     // Configured hashes stay authoritative; discovery only fills the gaps.
-    this.hashes = { ...discovered, ...this.config.partner.persistedQueries, ...this.hashes };
+    this.hashes = {
+      ...normaliseHashKeys(discovered),
+      ...this.hashes,
+      ...normaliseHashKeys(this.config.partner.persistedQueries),
+    };
+  }
 
-    const hash = this.hashes[operation];
+  private async hashFor(operation: string): Promise<string> {
+    const known = this.storedHash(operation);
+    if (known) return known;
+
+    await this.discoverHashes();
+    const hash = this.storedHash(operation);
     if (!hash) {
       throw new PartnerUnavailableError(
         `no persisted-query hash for "${operation}". Supply one with ` +
@@ -384,7 +460,7 @@ export class PartnerClient {
       if (error instanceof HttpError && error.status === 400) {
         // A rotated hash reads as a bad request; re-discover and retry once.
         log.warn(`pathfinder rejected ${operation}; re-discovering persisted queries`);
-        delete this.hashes[operation];
+        delete this.hashes[operation.toLowerCase()];
         this.hashDiscovery = null;
         return run();
       }
@@ -394,7 +470,7 @@ export class PartnerClient {
 
   /** Artist-level extras the public API does not expose (monthly listeners). */
   async getArtistOverview(artistId: string): Promise<ArtistOverview> {
-    const payload = await this.query(OPERATIONS.artistOverview, {
+    const payload = await this.query(await this.resolveOperation('artistOverview'), {
       uri: `spotify:artist:${artistId}`,
       locale: '',
       includePrerelease: false,
@@ -419,6 +495,84 @@ export class PartnerClient {
     };
   }
 
+  /**
+   * Artist search, so the site works with no developer credentials at all.
+   * The web player's own search backs this.
+   */
+  async searchArtists(query: string, limit = 20): Promise<PartnerArtist[]> {
+    const operation = await this.resolveOperation('search');
+    const payload = await this.query(operation, {
+      searchTerm: query,
+      // Different search operations name the term differently; send both.
+      query,
+      offset: 0,
+      limit,
+      numberOfTopResults: limit,
+      includeAudiobooks: false,
+      includePreReleases: false,
+    });
+    return extractArtists(payload).slice(0, limit);
+  }
+
+  /** Every release credited to an artist. */
+  async getDiscography(artistId: string, maxReleases: number): Promise<PartnerAlbum[]> {
+    const operation = await this.resolveOperation('discography');
+    const pageSize = 100;
+    const albums = new Map<string, PartnerAlbum>();
+
+    for (let offset = 0; offset < maxReleases; offset += pageSize) {
+      const payload = await this.query(operation, {
+        uri: `spotify:artist:${artistId}`,
+        offset,
+        limit: pageSize,
+        order: 'DATE_DESC',
+      });
+
+      const page = extractAlbums(payload);
+      for (const album of page) if (!albums.has(album.id)) albums.set(album.id, album);
+      // A short page means the discography is exhausted.
+      if (page.length < pageSize) break;
+    }
+
+    return [...albums.values()].slice(0, maxReleases);
+  }
+
+  /** Full track listings for one album, play counts included. */
+  async getAlbumTracks(albumId: string, totalTracks: number): Promise<PartnerTrack[]> {
+    const operation = await this.resolveOperation('album');
+    const pageSize = 300;
+    const pages = Math.max(1, Math.ceil(Math.max(totalTracks, 1) / pageSize));
+    const tracks = new Map<string, PartnerTrack>();
+
+    for (let page = 0; page < pages; page += 1) {
+      const payload = await this.query(operation, {
+        uri: `spotify:album:${albumId}`,
+        locale: '',
+        offset: page * pageSize,
+        limit: pageSize,
+      });
+      for (const track of extractTracks(payload)) {
+        const existing = tracks.get(track.id);
+        // Keep whichever reading actually carries a play count.
+        if (!existing || (existing.playCount === null && track.playCount !== null)) {
+          tracks.set(track.id, track);
+        }
+      }
+    }
+
+    return [...tracks.values()];
+  }
+
+  /** Artist profile without the documented API. */
+  async getArtistProfile(artistId: string): Promise<PartnerArtist | null> {
+    const payload = await this.query(await this.resolveOperation('artistOverview'), {
+      uri: `spotify:artist:${artistId}`,
+      locale: '',
+      includePrerelease: false,
+    });
+    return extractArtists(payload).find((artist) => artist.id === artistId) ?? null;
+  }
+
   /** Play counts for every track on one album. */
   async getAlbumPlayCounts(albumId: string, totalTracks: number): Promise<Map<string, number>> {
     const counts = new Map<string, number>();
@@ -426,7 +580,7 @@ export class PartnerClient {
     const pages = Math.max(1, Math.ceil(Math.max(totalTracks, 1) / pageSize));
 
     for (let page = 0; page < pages; page += 1) {
-      const payload = await this.query(OPERATIONS.album, {
+      const payload = await this.query(await this.resolveOperation('album'), {
         uri: `spotify:album:${albumId}`,
         locale: '',
         offset: page * pageSize,

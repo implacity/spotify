@@ -21,12 +21,29 @@ So this project has two data sources:
 
 | Source | What it provides | Reliability |
 | --- | --- | --- |
-| **Web API** (`api.spotify.com`) — documented, OAuth client credentials | Artists, releases, tracks, popularity, followers | Stable and supported |
-| **Pathfinder** (`api-partner.spotify.com`) — private, undocumented | Real per-track play counts, monthly listeners | Unsupported; auth and query hashes rotate without notice |
+| **Web API** (`api.spotify.com`) — documented, OAuth client credentials | Artists, releases, tracks, popularity, followers | Stable and supported, **but needs Premium** (below) |
+| **Pathfinder** (`api-partner.spotify.com`) — private, undocumented | Search, discography, tracks, play counts, monthly listeners | Unsupported; auth and query hashes rotate without notice |
 
-The app treats the first as the backbone and the second as an enrichment. If
-the play-count source is unavailable, you still get the full catalogue with
-popularity, and the UI says so instead of failing.
+There is a second catch beyond the missing play counts: **Spotify requires the
+account that owns your developer app to have an active Premium subscription**
+before the Web API will answer at all. Without it every call returns
+`403 — Active premium subscription required for the owner of the app`, valid
+credentials or not.
+
+So the app runs in one of two modes, chosen automatically:
+
+- **`official`** — credentials present. Documented API for the catalogue and
+  popularity, web player for play counts. The most stable arrangement.
+- **`partner`** — no credentials. *Everything* comes from the web player:
+  search, discography, track listings and play counts. No developer app, no
+  client secret, no Premium. You lose popularity scores, which have no
+  web-player equivalent — but play counts, the point of this site, are
+  strictly more informative.
+
+Force one with `SPOTIFY_SOURCE=official|partner`; the default `auto` picks
+`official` when credentials exist and `partner` otherwise. Either way, if the
+play-count source is unreachable the page still renders and says so rather
+than failing.
 
 Two things follow from this that are worth knowing before you deploy it:
 
@@ -61,7 +78,22 @@ Vega) with generated numbers, and the UI badges it as **Sample data**. Real
 artists are deliberately not used there — putting made-up stream counts under a
 real name would misrepresent them.
 
-### Real data
+### Real data, no credentials
+
+```bash
+npm run build && npm start
+```
+
+With no `SPOTIFY_CLIENT_ID` set, the app runs in `partner` mode and gets
+everything from the web player. Nothing to register, nothing to pay for.
+Check `activeSource` at `/api/health` to confirm which mode you are in.
+
+This path rests entirely on an undocumented API, so treat it as the trade-off
+it is: no setup, less stability.
+
+### Real data, via the documented API
+
+Needs Premium on the account that owns the app.
 
 ```bash
 cp .env.example .env          # Windows: copy .env.example .env
@@ -116,14 +148,22 @@ verified against the RFC's own test vectors.
 
 **Query hashes** are read out of the web player's JS bundles on first use and
 cached, so a Spotify release that rotates them heals itself. If discovery ever
-fails, pin one by hand:
+fails, pin one by hand (names are matched case-insensitively):
 
 ```bash
 SPOTIFY_PQ_QUERYARTISTOVERVIEW=<sha256>
 SPOTIFY_PQ_GETALBUM=<sha256>
+SPOTIFY_PQ_SEARCHARTISTS=<sha256>
+SPOTIFY_PQ_QUERYARTISTDISCOGRAPHYALL=<sha256>
 ```
 
 Copy those from a `pathfinder` request in your browser's network tab.
+
+**Operation names** also change between releases, so each role has a list of
+candidate spellings and the first one with a resolvable hash wins. Pin one
+explicitly with `SPOTIFY_OP_SEARCH`, `SPOTIFY_OP_DISCOGRAPHY`,
+`SPOTIFY_OP_ALBUM` or `SPOTIFY_OP_ARTISTOVERVIEW` if Spotify introduces a
+spelling this doesn't know about. The error message names the candidates it tried.
 
 ### How play counts are reported
 
@@ -153,7 +193,9 @@ Everything is environment variables; see `.env.example` for the annotated list.
 | `SPOTIFY_PARTNER_ENABLED` | `1` | Set `0` to run on popularity alone |
 | `SPOTIFY_PARTNER_TOKEN` / `SPOTIFY_SP_DC` | — | Play-count auth (see above) |
 | `SPOTIFY_TOTP_SECRET` / `SPOTIFY_TOTP_VERSION` | — / `5` | Token-request signing |
-| `SPOTIFY_PQ_<OPERATION>` | — | Pin a persisted-query hash |
+| `SPOTIFY_PQ_<OPERATION>` | — | Pin a persisted-query hash (case-insensitive) |
+| `SPOTIFY_SOURCE` | `auto` | `auto`, `official` or `partner` |
+| `SPOTIFY_OP_SEARCH` / `_DISCOGRAPHY` / `_ALBUM` / `_ARTISTOVERVIEW` | — | Pin a GraphQL operation name |
 | `MOCK` | `0` | Serve sample data, no credentials needed |
 | `CACHE_DIR` | `.cache` | Disk cache location; empty disables it |
 | `CACHE_ARTIST_TTL` | `21600` | Catalogue freshness, seconds |
