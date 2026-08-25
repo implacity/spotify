@@ -72,10 +72,18 @@ npm run build && npm start
 Everything else is read from `.env`, so no shell-specific environment syntax
 is needed on any platform.
 
-Get credentials from the [Spotify developer dashboard](https://developer.spotify.com/dashboard).
-Create an app; no redirect URI is required, since this uses the
-client-credentials flow. That alone gets you the full catalogue with
-popularity. For play counts, read on.
+Get credentials from the [Spotify developer dashboard](https://developer.spotify.com/dashboard),
+then **Create app**:
+
+- **Redirect URI** — required by the form, but never used here: the
+  client-credentials flow has no redirect step. Enter
+  `http://127.0.0.1:3000/callback`. Do *not* use `http://localhost:3000/...`;
+  Spotify rejects `localhost` for new apps and wants an explicit loopback
+  address (`127.0.0.1`, or `[::1]` for IPv6).
+- **Which API/SDKs are you planning to use?** — tick **Web API**.
+
+Copy the client ID and secret from the app's settings into `.env`. That alone
+gets you the full catalogue with popularity. For play counts, read on.
 
 ---
 
