@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
-import { OfficialClient } from '../src/spotify/official.js';
+import { OfficialClient, SubscriptionRequiredError } from '../src/spotify/official.js';
 
 /** Route stubbed responses by URL substring. */
 function stubFetch(routes: Array<[RegExp | string, unknown | ((url: string) => unknown)]>) {
@@ -93,6 +93,38 @@ describe('authentication', () => {
 
     expect(artist.name).toBe('Nova Ardent');
     expect(calls.filter((url) => url.includes('accounts.spotify.com'))).toHaveLength(2);
+  });
+
+  it('explains the Premium requirement rather than leaking a raw 403', async () => {
+    stubFetch([
+      TOKEN_ROUTE,
+      [
+        '/v1/search',
+        () =>
+          new Response(
+            'Active premium subscription required for the owner of the app. When the ' +
+              'subscription status changes, it can take a few hours before requests are allowed again.',
+            { status: 403 },
+          ),
+      ],
+    ]);
+
+    const attempt = new OfficialClient(makeConfig()).searchArtists('bladee');
+
+    await expect(attempt).rejects.toThrow(SubscriptionRequiredError);
+    // The message must be actionable and must not contain the request URL.
+    await expect(attempt).rejects.toThrow(/Premium subscription/i);
+    await expect(attempt).rejects.not.toThrow(/api\.spotify\.com/);
+  });
+
+  it('leaves other 403s alone', async () => {
+    stubFetch([
+      TOKEN_ROUTE,
+      ['/v1/search', () => new Response('{"error":"forbidden"}', { status: 403 })],
+    ]);
+    await expect(new OfficialClient(makeConfig()).searchArtists('x')).rejects.not.toThrow(
+      SubscriptionRequiredError,
+    );
   });
 
   it('explains what is missing when credentials are absent', async () => {

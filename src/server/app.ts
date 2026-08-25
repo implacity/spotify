@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import type { Config } from '../config.js';
 import { describeConfig } from '../config.js';
 import { ArtistService, ConfigurationError, NotFoundError } from '../service.js';
+import { SubscriptionRequiredError } from '../spotify/official.js';
 import { createLogger } from '../util/logger.js';
 import type { BuildProgress } from '../spotify/types.js';
 
@@ -211,7 +212,11 @@ export function createApp(config: Config, service = new ArtistService(config)): 
 
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     const status =
-      error instanceof NotFoundError ? 404 : error instanceof ConfigurationError ? 503 : 500;
+      error instanceof NotFoundError
+        ? 404
+        : error instanceof ConfigurationError || error instanceof SubscriptionRequiredError
+          ? 503
+          : 500;
     if (status === 500) log.error('unhandled error', error);
     res.status(status).json({ error: toMessage(error) });
   });

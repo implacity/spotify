@@ -6,6 +6,22 @@ import type { ArtistSummary, ReleaseRef, ReleaseType } from './types.js';
 
 const log = createLogger('official');
 
+/**
+ * Raised when Spotify refuses Web API access because the account that owns
+ * the app has no active Premium subscription.
+ */
+export class SubscriptionRequiredError extends Error {
+  constructor(readonly detail: string) {
+    super(
+      'Spotify refused the request: the account that owns this app needs an active ' +
+        'Premium subscription to use the Web API. Subscribe on the account that created ' +
+        'the app (changes can take a few hours to apply), use credentials from an account ' +
+        'that has it, or run with MOCK=1 for sample data.',
+    );
+    this.name = 'SubscriptionRequiredError';
+  }
+}
+
 const ACCOUNTS_URL = 'https://accounts.spotify.com/api/token';
 const API_BASE = 'https://api.spotify.com/v1';
 
@@ -194,6 +210,12 @@ export class OfficialClient {
         this.token = null;
         this.tokenExpiresAt = 0;
         return send();
+      }
+      // Spotify gates Web API access on the app owner's subscription. That is
+      // an account problem, not a bug, and deserves a message that says so
+      // rather than a raw 403 with the request URL in it.
+      if (error instanceof HttpError && error.status === 403 && /premium/i.test(error.body)) {
+        throw new SubscriptionRequiredError(error.body.trim());
       }
       throw error;
     }

@@ -72,6 +72,12 @@ npm run build && npm start
 Everything else is read from `.env`, so no shell-specific environment syntax
 is needed on any platform.
 
+> **Spotify requires the account that owns the app to have an active Premium
+> subscription** to use the Web API. Without it every request comes back
+> `403 — Active premium subscription required for the owner of the app`, even
+> though the credentials themselves are valid. A free account can create the
+> app but cannot call the API.
+
 Get credentials from the [Spotify developer dashboard](https://developer.spotify.com/dashboard),
 then **Create app**:
 
