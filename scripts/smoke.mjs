@@ -142,6 +142,28 @@ await step('the filter box narrows the table', async () => {
   await page.waitForTimeout(250);
 });
 
+// --- keyboard + focus behaviour ---
+await step('the filter input keeps focus while typing', async () => {
+  await page.click('.filter-input');
+  await page.keyboard.type('para');
+  await page.waitForTimeout(250);
+  const focused = await page.evaluate(() => document.activeElement?.className ?? '');
+  if (!focused.includes('filter-input')) throw new Error(`focus moved to "${focused}"`);
+  const caret = await page.evaluate(() => document.activeElement.selectionStart);
+  if (caret !== 4) throw new Error(`caret at ${caret}, expected 4`);
+  await page.fill('.filter-input', '');
+  await page.waitForTimeout(200);
+});
+
+await step('sortable headers work from the keyboard', async () => {
+  const before = await page.$$eval('.track-name a', (a) => a.map((n) => n.textContent));
+  await page.evaluate(() => document.querySelector('thead th.sortable').focus());
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(250);
+  const after = await page.$$eval('.track-name a', (a) => a.map((n) => n.textContent));
+  if (JSON.stringify(before) === JSON.stringify(after)) throw new Error('Enter did not sort');
+});
+
 // --- album-type chips ---
 await step('album-type chips filter the table', async () => {
   const before = await rowCount();

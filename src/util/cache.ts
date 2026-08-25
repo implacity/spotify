@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createLogger } from './logger.js';
 
@@ -79,8 +79,28 @@ export class Cache {
     }
   }
 
+  /** Drop the in-memory copy only. */
   delete(key: string): void {
     this.memory.delete(key);
+  }
+
+  /**
+   * Drop an entry from *both* tiers.
+   *
+   * Clearing memory alone is not enough: `wrap` re-reads on a miss and would
+   * hand back the on-disk copy, which made "force refresh" a no-op whenever a
+   * disk cache was configured.
+   */
+  async invalidate(key: string): Promise<void> {
+    this.memory.delete(key);
+    // A build already in flight would re-populate the entry on completion.
+    this.inflight.delete(key);
+    if (!this.options.dir) return;
+    try {
+      await rm(this.fileFor(key), { force: true });
+    } catch (error) {
+      log.warn('failed to remove cache entry', (error as Error).message);
+    }
   }
 
   /**

@@ -130,3 +130,25 @@ describe('Cache', () => {
     expect(await cache.get('k')).toBeUndefined();
   });
 });
+
+describe('invalidate', () => {
+  it('drops the disk copy too, so a forced refresh really rebuilds', async () => {
+    const cache = new Cache({ maxEntries: 10, dir });
+    await cache.set('artist:1', 'stale', 600);
+
+    await cache.invalidate('artist:1');
+
+    // Nothing may survive in either tier, or "refresh" silently serves the
+    // old catalogue back from disk.
+    expect(await cache.get('artist:1')).toBeUndefined();
+
+    const build = vi.fn(async () => 'fresh');
+    expect(await cache.wrap('artist:1', 600, build)).toBe('fresh');
+    expect(build).toHaveBeenCalledTimes(1);
+  });
+
+  it('is safe to call for a key that was never cached', async () => {
+    const cache = new Cache({ maxEntries: 10, dir });
+    await expect(cache.invalidate('never-seen')).resolves.toBeUndefined();
+  });
+});

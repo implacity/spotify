@@ -312,6 +312,42 @@ describe('getAlbumsWithTracks', () => {
     expect(album!.tracks).toHaveLength(62);
   });
 
+  it('keeps the readable albums when one batch fails outright', async () => {
+    const releases = Array.from({ length: 25 }, (_, index) => releaseRef(`al${index}`));
+    let batch = 0;
+
+    stubFetch([
+      TOKEN_ROUTE,
+      [
+        '/v1/albums?',
+        (url: string) => {
+          batch += 1;
+          // The second batch is permanently broken; the first must survive.
+          if (batch === 2) return new Response('{"error":"boom"}', { status: 404 });
+          return {
+            albums: new URL(url).searchParams
+              .get('ids')!
+              .split(',')
+              .map((id) => ({
+                id,
+                name: `Album ${id}`,
+                album_type: 'album',
+                release_date: '2020-01-01',
+                release_date_precision: 'day',
+                total_tracks: 1,
+                tracks: { items: [{ id: `${id}-t1`, name: 'Track', duration_ms: 1, explicit: false, disc_number: 1, track_number: 1 }], next: null },
+              })),
+          };
+        },
+      ],
+    ]);
+
+    const albums = await new OfficialClient(makeConfig()).getAlbumsWithTracks(releases);
+
+    // 20 from the good batch; the failed batch of 5 is dropped, not fatal.
+    expect(albums).toHaveLength(20);
+  });
+
   it('skips null album entries', async () => {
     stubFetch([TOKEN_ROUTE, ['/v1/albums?', { albums: [null] }]]);
     const albums = await new OfficialClient(makeConfig()).getAlbumsWithTracks([releaseRef('gone')]);

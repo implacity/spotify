@@ -161,6 +161,39 @@ describe('SSE streaming', () => {
   });
 });
 
+describe('transport hardening', () => {
+  it('sets security headers on responses', async () => {
+    const response = await fetch(`${base}/api/health`);
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('x-frame-options')).toBe('DENY');
+    expect(response.headers.get('content-security-policy')).toContain("default-src 'self'");
+    // Inline style attributes drive the play-count bars.
+    expect(response.headers.get('content-security-policy')).toContain("'unsafe-inline'");
+  });
+
+  it('compresses catalogue JSON', async () => {
+    const response = await fetch(`${base}/api/artist/${artistId}`, {
+      headers: { 'accept-encoding': 'gzip' },
+    });
+    expect(response.headers.get('content-encoding')).toBe('gzip');
+    // Still parses after transparent decoding.
+    expect((await response.json()).artist.name).toBe('Nova Ardent');
+  });
+
+  it('never compresses the event stream', async () => {
+    // Compression buffers, which would hold progress frames until the build
+    // finished and defeat the whole point of streaming.
+    const response = await fetch(`${base}/api/artist/${artistId}?stream=1`, {
+      headers: { accept: 'text/event-stream', 'accept-encoding': 'gzip' },
+    });
+    expect(response.headers.get('content-encoding')).toBeNull();
+
+    const text = await response.text();
+    expect(text).toContain('event: progress');
+    expect(text).toContain('event: catalog');
+  });
+});
+
 describe('static shell', () => {
   it('serves the SPA at the root', async () => {
     const response = await fetch(`${base}/`);

@@ -158,6 +158,12 @@ export class CatalogService {
       total: releases.length,
     });
     const albums = await this.official.getAlbumsWithTracks(releases);
+    if (albums.length < releases.length) {
+      warnings.push({
+        code: 'release_fetch_failed',
+        message: `${releases.length - albums.length} of ${releases.length} releases could not be read; their tracks are missing.`,
+      });
+    }
     onProgress({
       phase: 'tracks',
       message: `Reading ${releases.length} releases`,

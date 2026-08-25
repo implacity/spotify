@@ -135,6 +135,7 @@ Everything is environment variables; see `.env.example` for the annotated list.
 | `MOCK` | `0` | Serve sample data, no credentials needed |
 | `CACHE_DIR` | `.cache` | Disk cache location; empty disables it |
 | `CACHE_ARTIST_TTL` | `21600` | Catalogue freshness, seconds |
+| `CACHE_MAX_ENTRIES` | `64` | In-memory catalogues; each can be megabytes |
 | `SPOTIFY_CONCURRENCY` | `6` | Parallel upstream requests |
 | `SPOTIFY_MAX_RELEASES` | `400` | Ceiling on releases per artist |
 | `RATE_LIMIT_PER_MINUTE` | `120` | Per-IP API budget; `0` disables |
@@ -212,10 +213,12 @@ npm run typecheck
 ```
 
 Covers title normalization and duplicate merging, stats, the two-tier cache
+(including that a forced refresh really clears both tiers)
 (TTL, LRU eviction, single-flight, disk persistence), the Web API client
 against a stubbed `fetch` (token reuse, 401 re-auth, pagination, batch sizes),
 play-count extraction across old and new response shapes, and the HTTP API
-end-to-end including the SSE stream and rate limiting.
+end-to-end including the SSE stream, rate limiting, security headers, and
+that responses are gzipped while event streams deliberately are not.
 
 There's also a browser smoke test that drives the real UI in Chromium:
 
@@ -242,6 +245,9 @@ Or run `npm ci && npm run build && npm start` behind a reverse proxy. Notes
 for anything public-facing:
 
 - Give `CACHE_DIR` a persistent volume, or every restart rebuilds from scratch.
+- `CACHE_MAX_ENTRIES` counts whole catalogues, not rows. A large artist is
+  megabytes in memory, so raise it only with the RAM to match — the disk tier
+  is the durable one and costs nothing to keep large.
 - Keep `RATE_LIMIT_PER_MINUTE` on. The app sits in front of a rate-limited
   upstream and one impatient client can spend the whole budget.
 - The app trusts one proxy hop (`trust proxy = 1`) for client IPs. Adjust in

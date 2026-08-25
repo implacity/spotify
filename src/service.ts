@@ -88,7 +88,9 @@ export class ArtistService {
   ): Promise<ArtistCatalog> {
     const resolved: CatalogOptions = { ...DEFAULT_CATALOG_OPTIONS, ...options };
     const key = catalogKey(artistId, resolved);
-    if (forceRefresh) this.cache.delete(key);
+    // Must clear both tiers, otherwise the rebuild below reads the stale
+    // catalogue straight back off disk.
+    if (forceRefresh) await this.cache.invalidate(key);
 
     // Cache the ungrouped catalogue; grouping is a cheap view transform.
     const base = await this.buildBase(artistId, resolved, onProgress, forceRefresh, key);

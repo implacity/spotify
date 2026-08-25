@@ -256,7 +256,8 @@ export class OfficialClient {
     const results = await mapWithConcurrency(
       batches,
       this.config.limits.concurrency,
-      async (batch) => {
+      async (batch): Promise<AlbumWithTracks[]> => {
+       try {
         const payload = await this.get<{ albums: Array<RawAlbum | null> }>('/albums', {
           ids: batch.map((release) => release.id).join(','),
           market: this.config.official.market,
@@ -280,6 +281,15 @@ export class OfficialClient {
           });
         }
         return out;
+       } catch (error) {
+        // One unreadable batch must not take the whole catalogue down; the
+        // caller reports the shortfall as a warning instead.
+        log.warn(
+          `could not read ${batch.length} album(s)`,
+          error instanceof Error ? error.message : String(error),
+        );
+        return [];
+       }
       },
     );
 

@@ -98,7 +98,9 @@ export function loadConfig(env: Env = process.env): Config {
     cache: {
       artistTtl: num(env, 'CACHE_ARTIST_TTL', 60 * 60 * 6),
       searchTtl: num(env, 'CACHE_SEARCH_TTL', 60 * 30),
-      maxEntries: num(env, 'CACHE_MAX_ENTRIES', 500),
+      // Entries are whole catalogues — megabytes each for a large artist — so
+      // this is deliberately modest. The disk tier is the durable one.
+      maxEntries: num(env, 'CACHE_MAX_ENTRIES', 64),
       dir: str(env, 'CACHE_DIR', '.cache'),
     },
     limits: {

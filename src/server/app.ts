@@ -1,4 +1,5 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
+import compression from 'compression';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import type { Config } from '../config.js';
@@ -49,10 +50,50 @@ function boolParam(value: unknown, fallback: boolean): boolean {
   return /^(1|true|yes|on)$/i.test(String(value));
 }
 
+/**
+ * Conservative security headers. No CSP nonce machinery — the page loads no
+ * third-party code — but inline `style` attributes are used for the play-count
+ * bars, so style-src has to allow them.
+ */
+function securityHeaders(_req: Request, res: Response, next: NextFunction): void {
+  res.setHeader('x-content-type-options', 'nosniff');
+  res.setHeader('x-frame-options', 'DENY');
+  res.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
+  res.setHeader(
+    'content-security-policy',
+    [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      // Artist and album art comes from Spotify's CDN; mock mode uses data URIs.
+      "img-src 'self' data: https:",
+      "connect-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join('; '),
+  );
+  next();
+}
+
 export function createApp(config: Config, service = new ArtistService(config)): express.Express {
   const app = express();
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
+  app.use(securityHeaders);
+
+  // A big catalogue is a megabyte-plus of JSON, so this is the single largest
+  // transfer win. Event streams are excluded: compression buffers output and
+  // would stall progress frames until the build finished.
+  app.use(
+    compression({
+      filter: (req, res) => {
+        const type = String(res.getHeader('content-type') ?? '');
+        if (type.includes('text/event-stream')) return false;
+        return compression.filter(req, res);
+      },
+    }),
+  );
 
   const api = express.Router();
   api.use(rateLimiter(config.limits.rateLimitPerMinute));

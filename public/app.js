@@ -437,7 +437,7 @@ function renderTable(catalog, onChange) {
           th.append(' ', el('span', { class: 'sort-arrow', text: tableState.sortDir === 'asc' ? '▲' : '▼' }));
         }
         if (column.sortable) {
-          th.addEventListener('click', () => {
+          const applySort = () => {
             if (tableState.sortKey === column.key) {
               tableState.sortDir = tableState.sortDir === 'asc' ? 'desc' : 'asc';
             } else {
@@ -446,6 +446,17 @@ function renderTable(catalog, onChange) {
               tableState.sortDir = column.numeric || column.key === 'releaseDate' ? 'desc' : 'asc';
             }
             onChange();
+          };
+          // A click handler alone leaves the table unusable by keyboard, so
+          // the header behaves like the button it effectively is.
+          // A th already carries the columnheader role and aria-sort conveys
+          // the state; it just needs to be reachable and operable.
+          th.setAttribute('tabindex', '0');
+          th.addEventListener('click', applySort);
+          th.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            applySort();
           });
         }
         return th;
@@ -529,7 +540,11 @@ function downloadCsv(catalog) {
   const rows = visibleRows(catalog);
   const header = ['Rank', 'Track', 'Album', 'Album type', 'Released', 'Plays', 'Popularity', 'Duration (s)', 'Track URL'];
   const escape = (value) => {
-    const text = value === null || value === undefined ? '' : String(value);
+    let text = value === null || value === undefined ? '' : String(value);
+    // Track and album names come from Spotify, so treat them as untrusted:
+    // a leading =, +, - or @ makes spreadsheets evaluate the cell as a
+    // formula. Prefixing an apostrophe keeps it inert text.
+    if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
     return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   };
 
@@ -552,7 +567,9 @@ function downloadCsv(catalog) {
     );
   });
 
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  // The BOM makes Excel read the file as UTF-8; without it accented titles
+  // arrive mangled.
+  const blob = new Blob(['\ufeff', lines.join('\n')], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = el('a', {
     href: url,
@@ -591,7 +608,7 @@ function renderControls(catalog, onChange, onReload) {
   });
   filter.addEventListener('input', () => {
     tableState.filter = filter.value;
-    onChange({ keepFocus: 'filter' });
+    onChange();
   });
 
   return el('div', { class: 'controls' }, [
@@ -790,14 +807,25 @@ function groupRows(rows) {
 async function renderArtist(artistId) {
   let raw = null;
 
-  const paint = (options = {}) => {
+  // The table lives in a stable host so sorting and filtering swap only the
+  // rows. Rebuilding the whole view per keystroke meant re-creating the
+  // header, the tiles and every row — thousands of nodes for a big catalogue —
+  // and destroying the very input being typed into.
+  const tableHost = el('div');
+  let catalog = null;
+
+  const drawTable = () => {
+    if (catalog) tableHost.replaceChildren(renderTable(catalog, drawTable));
+  };
+
+  const paint = () => {
     if (!raw) return;
     const tracks = tableState.group ? groupRows(raw.tracks) : raw.tracks;
-    const catalog = { ...raw, tracks, stats: recomputeStats(tracks, raw.stats) };
+    catalog = { ...raw, tracks, stats: recomputeStats(tracks, raw.stats) };
 
-    const onChange = (opts = {}) => paint(opts);
     const onReload = (refresh = false) => {
       if (refresh === true) load(true);
+      // Grouping changes the row set, so the tiles have to be rebuilt too.
       else paint();
     };
 
@@ -805,15 +833,10 @@ async function renderArtist(artistId) {
       renderHeader(catalog.artist),
       renderWarnings(catalog) ?? document.createComment(''),
       renderStats(catalog),
-      renderControls(catalog, onChange, onReload),
-      renderTable(catalog, onChange),
+      renderControls(catalog, drawTable, onReload),
+      tableHost,
     );
-
-    if (options.keepFocus === 'filter') {
-      const input = view.querySelector('.filter-input');
-      input?.focus();
-      input?.setSelectionRange(input.value.length, input.value.length);
-    }
+    drawTable();
   };
 
   const load = async (refresh = false) => {
