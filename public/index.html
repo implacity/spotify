@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Spindex — Spotify artist play counts</title>
+    <meta
+      name="description"
+      content="Look up any Spotify artist and see every song in their catalogue ranked by play count."
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2314141a'/%3E%3Cg fill='%231fdf64'%3E%3Crect x='7' y='17' width='3.5' height='8' rx='1.75'/%3E%3Crect x='14' y='9' width='3.5' height='16' rx='1.75'/%3E%3Crect x='21' y='13' width='3.5' height='12' rx='1.75'/%3E%3C/g%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" data-link>
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="7" y="17" width="3.5" height="8" rx="1.75" />
+          <rect x="14" y="9" width="3.5" height="16" rx="1.75" />
+          <rect x="21" y="13" width="3.5" height="12" rx="1.75" />
+        </svg>
+        <span>Spindex</span>
+      </a>
+
+      <form class="searchbar" id="searchbar" role="search" autocomplete="off">
+        <input
+          id="search-input"
+          type="search"
+          name="q"
+          placeholder="Search for an artist…"
+          aria-label="Search for an artist"
+          spellcheck="false"
+        />
+        <button type="submit" aria-label="Search">Search</button>
+        <div class="suggestions" id="suggestions" hidden role="listbox"></div>
+      </form>
+
+      <span class="mode-badge" id="mode-badge" hidden></span>
+    </header>
+
+    <main id="view" class="view"></main>
+
+    <footer class="footer">
+      <p>
+        Play counts come from Spotify's public web player. Popularity is from the Spotify Web API.
+        Spindex is an independent project and is not affiliated with, endorsed by, or connected to
+        Spotify.
+      </p>
+    </footer>
+
+    <template id="tpl-home">
+      <section class="home">
+        <h1>Every song, every play count.</h1>
+        <p class="lede">
+          Search a Spotify artist to see their full catalogue ranked by streams — albums, singles,
+          features and all.
+        </p>
+        <form class="home-search" id="home-search">
+          <input
+            type="search"
+            id="home-search-input"
+            placeholder="Try an artist name…"
+            aria-label="Search for an artist"
+            spellcheck="false"
+          />
+          <button type="submit">Look up</button>
+        </form>
+        <div class="home-results" id="home-results"></div>
+      </section>
+    </template>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
