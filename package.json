@@ -11,11 +11,12 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "dev:mock": "MOCK=1 tsx watch src/index.ts",
+    "dev:mock": "tsx watch src/index.ts --mock",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "start:mock": "node dist/index.js --mock"
   },
   "dependencies": {
     "@types/compression": "^1.8.1",

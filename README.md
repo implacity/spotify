@@ -47,9 +47,14 @@ No credentials needed — this runs the whole site on generated sample data:
 ```bash
 npm install
 npm run build
-MOCK=1 npm start
+npm run start:mock
 # → http://localhost:3000
 ```
+
+`start:mock` works the same in cmd, PowerShell and any Unix shell. (The
+`MOCK=1 npm start` form you may see elsewhere is bash-only and fails on
+Windows cmd with *'MOCK' is not recognized*.) Setting `MOCK=1` in a `.env`
+file works everywhere too.
 
 Sample mode uses three invented artists (Nova Ardent, Glass Cathedral, Marisol
 Vega) with generated numbers, and the UI badges it as **Sample data**. Real
@@ -59,10 +64,13 @@ real name would misrepresent them.
 ### Real data
 
 ```bash
-cp .env.example .env
+cp .env.example .env          # Windows: copy .env.example .env
 # fill in SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET
 npm run build && npm start
 ```
+
+Everything else is read from `.env`, so no shell-specific environment syntax
+is needed on any platform.
 
 Get credentials from the [Spotify developer dashboard](https://developer.spotify.com/dashboard).
 Create an app; no redirect URI is required, since this uses the
@@ -224,8 +232,8 @@ There's also a browser smoke test that drives the real UI in Chromium:
 
 ```bash
 npm run build
-MOCK=1 PORT=3111 npm start &
-npm run smoke
+npm run start:mock          # in one terminal
+npm run smoke               # in another (BASE defaults to :3000)
 ```
 
 It checks search, typeahead, navigation, sorting, filtering, duplicate

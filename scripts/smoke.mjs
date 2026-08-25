@@ -5,10 +5,10 @@ import { chromium } from 'playwright';
  * running in mock mode. Unit tests cover the data layer; this covers the part
  * a user actually touches — search, navigation, sorting, filtering, layout.
  *
- *   npm run build && MOCK=1 PORT=3111 npm start &
- *   BASE=http://127.0.0.1:3111 node scripts/smoke.mjs
+ *   npm run build && npm run start:mock
+ *   npm run smoke            (override the target with BASE=...)
  */
-const BASE = process.env.BASE ?? 'http://127.0.0.1:3111';
+const BASE = process.env.BASE ?? 'http://127.0.0.1:3000';
 const OUT = process.env.OUT ?? 'screenshots';
 
 import { mkdirSync } from 'node:fs';
