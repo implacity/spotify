@@ -161,7 +161,27 @@ SPOTIFY_PQ_SEARCHARTISTS=<sha256>
 SPOTIFY_PQ_QUERYARTISTDISCOGRAPHYALL=<sha256>
 ```
 
-The `pin` helper writes these for you. Give it either the operation name and
+**The easy way — let a browser do it:**
+
+```bash
+npm run harvest
+```
+
+This drives a real browser through the web player (home, search, an artist,
+their discography, an album), records the requests it makes, and writes every
+hash it needs into `.env`. It uses your installed Chrome or Edge if it can
+find one, so there is usually nothing to download. Add `--headed` to watch it,
+`--artist <id>` / `--album <id>` to target specific pages.
+
+It also writes `harvest-report.json` with every operation it saw — names,
+hashes and the exact variables the player sent. That last part matters:
+persisted queries reject variables they do not declare, so a correct hash
+paired with a guessed variable set still fails. If something does not work,
+that file is the thing to look at.
+
+Re-run it whenever Spotify rotates the hashes.
+
+**The manual way.** The `pin` helper writes these for you. Give it either the operation name and
 hash as shown in devtools:
 
 ```bash
