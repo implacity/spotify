@@ -54,10 +54,17 @@ Two things follow from this that are worth knowing before you deploy it:
 - **It can break at any time.** Spotify changes the private API's auth scheme
   and its persisted-query hashes regularly. The code is built to adapt (see
   [Play counts](#play-counts)), but no undocumented API is a stable dependency.
-- **Check the terms that apply to you.** Reading the private endpoint is not
-  covered by Spotify's Developer Terms of Service, and scraping is generally
-  disallowed by them. Running this privately against public data is a different
-  proposition from operating it as a public service. That call is yours to make.
+- **Spotify has blocked the anonymous token route.** As of late 2026 the
+  web-player token endpoints answer with
+  `Unauthorized request — Usage of this endpoint is not permitted under the
+  Spotify Developer Terms and Developer Policy, and applicable law`, and the
+  legacy one returns `403 URL Blocked`. That is the service operator
+  declining this access path, not a bug to work around, so **the play-count
+  source should be treated as closed**. The code paths remain for anyone with
+  a legitimate arrangement, but the default experience is now the Web API.
+- **The supported path is the Web API**, which needs Premium on the account
+  owning the app. It gives the full catalogue with popularity scores, but no
+  play counts — Spotify has never exposed those publicly.
 
 ---
 

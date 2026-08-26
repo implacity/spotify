@@ -214,6 +214,29 @@ export function searchVariables(
   }
 }
 
+/**
+ * Raised when Spotify refuses the web-player token endpoint on policy
+ * grounds rather than for a technical reason.
+ *
+ * The endpoint answers with an explicit note that its use "is not permitted
+ * under the Spotify Developer Terms and Developer Policy, and applicable
+ * law". That is a decision by the service operator, not a misconfiguration,
+ * so it is surfaced as its own thing instead of being buried among retryable
+ * failures — there is no setting that makes it go away.
+ */
+export class PartnerForbiddenError extends Error {
+  constructor(readonly detail: string) {
+    super(
+      'Spotify has blocked the web-player token endpoint, stating its use is not ' +
+        'permitted under their Developer Terms. Play counts are unavailable through ' +
+        'this route. The supported alternative is the Web API (SPOTIFY_CLIENT_ID / ' +
+        'SPOTIFY_CLIENT_SECRET, which needs Premium on the app owner) — it provides ' +
+        'the full catalogue with popularity scores, but not play counts.',
+    );
+    this.name = 'PartnerForbiddenError';
+  }
+}
+
 export class PartnerUnavailableError extends Error {
   constructor(
     message: string,
@@ -372,6 +395,8 @@ export class PartnerClient {
     ];
 
     const failures: string[] = [];
+    let policyBlocked: string | null = null;
+
     for (const [name, strategy] of strategies) {
       try {
         const token = await strategy();
@@ -382,10 +407,17 @@ export class PartnerClient {
         failures.push(`${name}: empty response`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        // Spotify names its own policy in the refusal; that is not something
+        // another strategy or a retry can resolve.
+        if (/not permitted under the Spotify Developer Terms|URL Blocked/i.test(message)) {
+          policyBlocked ??= message;
+        }
         failures.push(`${name}: ${message}`);
         log.debug(`token strategy ${name} failed`, message);
       }
     }
+
+    if (policyBlocked) throw new PartnerForbiddenError(policyBlocked);
 
     throw new PartnerUnavailableError(
       `could not obtain a web-player token (${failures.join('; ')}). ` +
