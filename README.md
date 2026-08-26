@@ -161,11 +161,22 @@ SPOTIFY_PQ_SEARCHARTISTS=<sha256>
 SPOTIFY_PQ_QUERYARTISTDISCOGRAPHYALL=<sha256>
 ```
 
-Rather than transcribing 64-character hashes by hand, paste the request URL:
+The `pin` helper writes these for you. Give it either the operation name and
+hash as shown in devtools:
 
 ```bash
-npm run pin -- "<url>"
+npm run pin -- "queryArtistOverview=1a2b3c…64-hex-chars"
 ```
+
+or the whole request URL:
+
+```bash
+npm run pin -- "https://api-partner.spotify.com/pathfinder/v1/query?operationName=…&extensions=…"
+```
+
+(Quote the argument; the `<…>` in these examples are placeholders, not
+literal characters. A `spotify:artist:…` URI or an `open.spotify.com` page
+link is not the request — the helper says so if you paste one.)
 
 In devtools, open the **Network** tab, filter for `pathfinder`, right-click a
 request and choose **Copy → Copy link address**. The helper reads the

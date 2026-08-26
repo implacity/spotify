@@ -47,6 +47,16 @@ function roleFor(name) {
 
 function parse(text) {
   const found = [];
+
+  // Simplest form: "operationName=<64 hex>", straight off the devtools panel
+  // without needing to copy a URL at all.
+  for (const match of text.matchAll(/\b([A-Za-z][A-Za-z0-9_]{2,60})\s*[=:]\s*"?([0-9a-f]{64})"?/gi)) {
+    const name = match[1];
+    // Skip the env-var spelling; the operation name is what we want.
+    if (/^SPOTIFY_PQ_/i.test(name)) continue;
+    found.push({ name, hash: match[2].toLowerCase(), role: roleFor(name) });
+  }
+
   // Accept a bare URL, "copy as fetch" output, or anything containing one.
   const urls = text.match(/https?:\/\/[^\s"'`]+pathfinder[^\s"'`]*/gi) ?? [];
 
@@ -73,7 +83,38 @@ function parse(text) {
     found.push({ name, hash: hash.toLowerCase(), role: roleFor(name) });
   }
 
-  return found;
+  // De-duplicate when the same operation arrives by both routes.
+  const seen = new Set();
+  return found.filter(({ name, hash }) => {
+    const key = `${name}:${hash}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Explain the specific wrong thing that was pasted, where we can tell. */
+function diagnose(text) {
+  const trimmed = text.trim();
+  if (/^<.*>$/.test(trimmed)) {
+    return 'That looks like the placeholder from the instructions. Paste the real value, without the angle brackets.';
+  }
+  if (/spotify:(artist|album|track|playlist):/i.test(trimmed)) {
+    return (
+      'That is a Spotify URI (what the app plays), not a network request.\n' +
+      'It identifies content; it carries no persisted-query hash.'
+    );
+  }
+  if (/open\.spotify\.com/i.test(trimmed)) {
+    return (
+      'That is an open.spotify.com page link, not the API request the page makes.\n' +
+      'The one you want goes to api-partner.spotify.com/pathfinder.'
+    );
+  }
+  if (/api-partner\.spotify\.com/i.test(trimmed)) {
+    return 'That is a pathfinder URL, but it has no extensions= parameter with a sha256Hash in it.';
+  }
+  return null;
 }
 
 /** Replace a KEY=... line in place, or append it. */
@@ -110,11 +151,16 @@ if (!input.trim()) {
 const entries = parse(input);
 
 if (entries.length === 0) {
+  const hint = diagnose(input);
   console.error(
-    'No pathfinder URLs with a persisted-query hash found.\n\n' +
-      'In devtools: Network tab, filter "pathfinder", right-click a request,\n' +
-      'Copy -> Copy link address, then pass it here. The URL must contain both\n' +
-      'operationName= and extensions= parameters.',
+    `Nothing to pin.${hint ? `\n\n${hint}` : ''}\n\n` +
+      'Two ways to give it what it needs:\n\n' +
+      '1. The operation name and hash you can read in devtools:\n' +
+      '     npm run pin -- queryArtistOverview=1a2b3c...64-hex-chars\n\n' +
+      '2. The whole request URL (Network tab, filter "pathfinder",\n' +
+      '   right-click the request, Copy -> Copy link address):\n' +
+      '     npm run pin -- "https://api-partner.spotify.com/pathfinder/v1/query?operationName=...&extensions=..."\n\n' +
+      'Either way, quote the argument and leave out any < > brackets.',
   );
   process.exit(1);
 }
