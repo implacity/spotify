@@ -113,38 +113,79 @@ const page = await context.newPage();
 const seen = new Map();
 let token = null;
 
-page.on('request', (request) => {
+/** Every API host touched, so a miss can be diagnosed instead of guessed at. */
+const hostTally = new Map();
+
+function record(name, hash, variables, authorization) {
+  if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/i.test(hash)) return;
+
+  if (!seen.has(name)) {
+    const role = roleFor(name);
+    seen.set(name, { name, hash: hash.toLowerCase(), variables: variables ?? {}, role });
+    console.log(`  captured ${name}${role ? `  (${role})` : ''}`);
+  }
+  if (!token && authorization?.startsWith('Bearer ')) token = authorization.slice(7);
+}
+
+/**
+ * Pull an operation out of a request, however it was sent.
+ *
+ * The player has used GET with query parameters and POST with a JSON body,
+ * and issues some of these from a service worker — which is why this listens
+ * on the context rather than the page.
+ */
+// Page requests reach both listeners; count each one once.
+const inspected = new WeakSet();
+
+function inspect(request) {
+  if (inspected.has(request)) return;
+  inspected.add(request);
+
   const url = request.url();
-  // Match on the path, not the host, so this is testable against a local stub.
-  if (!url.includes('/pathfinder/')) return;
 
   try {
     const parsed = new URL(url);
-    const name = parsed.searchParams.get('operationName');
-    const extensions = parsed.searchParams.get('extensions');
-    const variables = parsed.searchParams.get('variables');
-    if (!name || !extensions) return;
-
-    const hash = JSON.parse(extensions)?.persistedQuery?.sha256Hash;
-    if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/i.test(hash)) return;
-
-    if (!seen.has(name)) {
-      seen.set(name, {
-        name,
-        hash: hash.toLowerCase(),
-        variables: variables ? JSON.parse(variables) : {},
-        role: roleFor(name),
-      });
-      const role = roleFor(name);
-      console.log(`  captured ${name}${role ? `  (${role})` : ''}`);
+    if (/spotify|scdn/i.test(parsed.hostname)) {
+      const key = `${parsed.hostname}${parsed.pathname.split('/').slice(0, 3).join('/')}`;
+      hostTally.set(key, (hostTally.get(key) ?? 0) + 1);
     }
 
-    const auth = request.headers().authorization;
-    if (!token && auth?.startsWith('Bearer ')) token = auth.slice(7);
+    // GET form: everything is in the query string.
+    const name = parsed.searchParams.get('operationName');
+    if (name) {
+      const extensions = parsed.searchParams.get('extensions');
+      const variables = parsed.searchParams.get('variables');
+      record(
+        name,
+        extensions ? JSON.parse(extensions)?.persistedQuery?.sha256Hash : undefined,
+        variables ? JSON.parse(variables) : {},
+        request.headers().authorization,
+      );
+      return;
+    }
+
+    // POST form: the same fields arrive as a JSON body.
+    if (request.method() !== 'POST') return;
+    const body = request.postData();
+    if (!body || !body.includes('operationName')) return;
+
+    const payload = JSON.parse(body);
+    for (const entry of Array.isArray(payload) ? payload : [payload]) {
+      record(
+        entry?.operationName,
+        entry?.extensions?.persistedQuery?.sha256Hash,
+        entry?.variables ?? {},
+        request.headers().authorization,
+      );
+    }
   } catch {
-    // A request we cannot parse is simply not one we can use.
+    // Unparseable requests are simply not ones we can use.
   }
-});
+}
+
+// Context-level so service-worker and cross-frame traffic is included too.
+context.on('request', inspect);
+page.on('request', inspect);
 
 const settle = async (ms = 2500) => {
   await page.waitForTimeout(ms);
@@ -154,8 +195,11 @@ async function visit(path, label) {
   console.log(`\n→ ${label}`);
   try {
     await page.goto(`${BASE}${path}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
-    // The player fires its queries after hydration, not on load.
+    // The player fires its queries after hydration, not on load, and defers
+    // some until content scrolls into view.
     await settle();
+    await page.mouse.wheel(0, 2000).catch(() => {});
+    await settle(1500);
   } catch (error) {
     console.log(`  (${error.message.split('\n')[0]})`);
   }
@@ -200,11 +244,29 @@ await browser.close();
 // ---------------------------------------------------------------- results
 
 if (seen.size === 0) {
-  console.error(
-    '\nNo pathfinder requests were captured.\n\n' +
-      'Try `npm run harvest -- --headed` to watch what the browser does; a\n' +
-      'consent dialog or a region block will be obvious that way.',
+  const busiest = [...hostTally.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15);
+
+  console.error('\nNo persisted-query operations were captured.\n');
+  if (busiest.length > 0) {
+    console.error('Spotify endpoints the browser did talk to:\n');
+    for (const [host, count] of busiest) console.error(`  ${String(count).padStart(4)}  ${host}`);
+    console.error(
+      '\nThe data is coming from one of those. Send this list back and it can\n' +
+        'be matched exactly — no guessing needed.',
+    );
+  } else {
+    console.error(
+      'The browser reached no Spotify endpoints at all, which points at the\n' +
+        'page never loading. Try `npm run harvest -- --headed` to watch it.',
+    );
+  }
+
+  writeFileSync(
+    REPORT_PATH,
+    `${JSON.stringify({ capturedAt: new Date().toISOString(), base: BASE, operations: [], hosts: Object.fromEntries(hostTally) }, null, 2)}\n`,
+    'utf8',
   );
+  console.error(`\nEndpoint tally written to ${REPORT_PATH}`);
   process.exit(1);
 }
 
