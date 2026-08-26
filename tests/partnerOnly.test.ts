@@ -125,7 +125,35 @@ function stubPathfinder(options: { failAlbum?: string } = {}) {
       }
 
       if (operation === 'queryArtistOverview') {
-        return json({ data: { artistUnion: artistNode } });
+        return json({
+          data: {
+            artistUnion: {
+              ...artistNode,
+              discography: {
+                topTracks: {
+                  items: [
+                    {
+                      track: {
+                        uri: 'spotify:track:trackBBBBBBBBBBBBBBB',
+                        name: 'Be Nice 2 Me',
+                        playcount: '91000000',
+                        duration: { totalMilliseconds: 165000 },
+                      },
+                    },
+                    {
+                      track: {
+                        uri: 'spotify:track:trackAAAAAAAAAAAAAAA',
+                        name: 'Western Union',
+                        playcount: '48120394',
+                        duration: { totalMilliseconds: 187000 },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        });
       }
 
       if (operation === 'queryArtistDiscographyAll') {
@@ -183,6 +211,41 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe('degrading when only some hashes are available', () => {
+  /** Only search and artistOverview pinned — the common half-set-up state. */
+  const partialConfig = () =>
+    loadConfig({
+      SPOTIFY_SOURCE: 'partner',
+      SPOTIFY_PARTNER_TOKEN: 'test-token',
+      SPOTIFY_PQ_SEARCHSUGGESTIONS: HASH,
+      SPOTIFY_PQ_QUERYARTISTOVERVIEW: HASH,
+      CACHE_DIR: '',
+    } as NodeJS.ProcessEnv);
+
+  it('still returns top tracks with real play counts', async () => {
+    // Discovery cannot reach Spotify from a test, so the missing hashes stay
+    // missing — exactly the half-configured case this must survive.
+    const catalog = await new ArtistService(partialConfig()).getCatalog(ARTIST);
+
+    expect(catalog.artist.name).toBe('Bladee');
+    expect(catalog.tracks).toHaveLength(2);
+    expect(catalog.tracks[0]!.playCount).toBe(91_000_000);
+  });
+
+  it('says plainly that this is not the full catalogue', async () => {
+    const catalog = await new ArtistService(partialConfig()).getCatalog(ARTIST);
+    const messages = catalog.warnings.map((warning) => warning.message).join(' ');
+
+    expect(messages).toMatch(/top \d+ tracks/i);
+    expect(catalog.playCountsComplete).toBe(false);
+  });
+
+  it('does not invent album details it does not have', async () => {
+    const catalog = await new ArtistService(partialConfig()).getCatalog(ARTIST);
+    expect(catalog.tracks.every((track) => track.album.name === '—')).toBe(true);
+  });
 });
 
 describe('searchVariables', () => {

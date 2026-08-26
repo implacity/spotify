@@ -3,8 +3,8 @@ import { createLogger } from '../util/logger.js';
 import { mapWithConcurrency } from '../util/limit.js';
 import { displayTitle, trackDedupeKey } from '../util/normalize.js';
 import { computeStats } from './catalog.js';
-import type { PartnerClient } from './partner.js';
-import type { PartnerAlbum } from './partnerEntities.js';
+import { PartnerUnavailableError, type PartnerClient } from './partner.js';
+import type { PartnerAlbum, PartnerArtist, PartnerTrack } from './partnerEntities.js';
 import type {
   ArtistCatalog,
   ArtistDetail,
@@ -48,12 +48,89 @@ export class PartnerCatalogService {
     };
   }
 
+  /** Minimal catalogue from the artist overview alone. */
+  private fromTopTracks(
+    profile: PartnerArtist,
+    topTracks: PartnerTrack[],
+    albums: PartnerAlbum[],
+    warnings: CatalogWarning[],
+    startedAt: number,
+    onProgress: ProgressReporter,
+  ): ArtistCatalog {
+    const releases = albums.map((album) => this.toRelease(album));
+
+    // Top-track nodes carry no album reference, so the album column has
+    // nothing truthful to show; it stays blank rather than guessing.
+    const rows: TrackRow[] = topTracks.map((track) => ({
+      id: track.id,
+      name: track.name,
+      displayName: displayTitle(track.name),
+      url: `https://open.spotify.com/track/${track.id}`,
+      durationMs: track.durationMs,
+      explicit: track.explicit,
+      discNumber: track.discNumber,
+      trackNumber: track.trackNumber,
+      popularity: null,
+      playCount: track.playCount,
+      album: {
+        id: '',
+        name: '—',
+        type: 'album' as const,
+        releaseDate: '',
+        image: profile.image,
+        url: `https://open.spotify.com/artist/${profile.id}`,
+      },
+      artists: track.artists.length > 0 ? track.artists : [{ id: profile.id, name: profile.name }],
+      isFeature: false,
+      groupKey: trackDedupeKey(track.name, track.artists[0]?.name ?? profile.name),
+      duplicateCount: 0,
+      duplicateIds: [],
+    }));
+
+    rows.sort((a, b) => (b.playCount ?? -1) - (a.playCount ?? -1) || a.name.localeCompare(b.name));
+
+    warnings.push({
+      code: 'playcounts_unavailable',
+      message: `Showing the artist's top ${rows.length} tracks, not the full catalogue.`,
+      detail:
+        'The per-album query is not available. Pin its hash with `npm run pin` to get ' +
+        'every track — see the README.',
+    });
+
+    onProgress({ phase: 'done', message: 'Done', completed: 1, total: 1 });
+
+    return {
+      artist: {
+        id: profile.id,
+        name: profile.name,
+        url: `https://open.spotify.com/artist/${profile.id}`,
+        image: profile.image,
+        followers: profile.followers,
+        popularity: null,
+        genres: [],
+        monthlyListeners: profile.monthlyListeners,
+        verified: profile.verified,
+        biography: null,
+        topCity: null,
+      },
+      tracks: rows,
+      stats: computeStats(rows, releases),
+      releases,
+      warnings,
+      playCountsComplete: false,
+      source: 'live',
+      generatedAt: new Date().toISOString(),
+      buildMs: Date.now() - startedAt,
+    };
+  }
+
   async build(artistId: string, onProgress: ProgressReporter = () => {}): Promise<ArtistCatalog> {
     const startedAt = Date.now();
     const warnings: CatalogWarning[] = [];
 
     onProgress({ phase: 'artist', message: 'Loading artist', completed: 0, total: 1 });
-    const profile = await this.partner.getArtistProfile(artistId);
+    const overview = await this.partner.getArtistOverviewBundle(artistId);
+    const profile = overview.profile;
     if (!profile) {
       throw new Error(
         `Spotify returned no artist for ${artistId}. The id may be wrong, or the ` +
@@ -62,13 +139,37 @@ export class PartnerCatalogService {
     }
 
     onProgress({ phase: 'releases', message: 'Listing releases', completed: 0, total: 1 });
-    const albums = await this.partner.getDiscography(artistId, this.config.limits.maxReleases);
+
+    // The full discography needs its own operation. When that hash is not
+    // available, the overview response already carried a slice of releases —
+    // a partial page beats an error page.
+    let albums: PartnerAlbum[];
+    try {
+      albums = await this.partner.getDiscography(artistId, this.config.limits.maxReleases);
+    } catch (error) {
+      if (!(error instanceof PartnerUnavailableError)) throw error;
+      albums = overview.albums;
+      warnings.push({
+        code: 'partial_releases',
+        message: 'Full discography unavailable; showing only what the artist page returned.',
+        detail: error.message,
+      });
+      log.warn('discography operation unavailable, using overview releases');
+    }
+
     if (albums.length >= this.config.limits.maxReleases) {
       warnings.push({
         code: 'partial_releases',
         message: `Only the first ${this.config.limits.maxReleases} releases were scanned.`,
         detail: 'Raise SPOTIFY_MAX_RELEASES to cover the whole discography.',
       });
+    }
+
+    // Per-album track listings need their own operation too. Without it, the
+    // overview's top tracks still carry real play counts.
+    if (!(await this.partner.canResolve('album'))) {
+      log.warn('album operation unavailable, falling back to top tracks');
+      return this.fromTopTracks(profile, overview.topTracks, albums, warnings, startedAt, onProgress);
     }
 
     const releases = albums.map((album) => this.toRelease(album));

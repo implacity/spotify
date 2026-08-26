@@ -173,6 +173,11 @@ operation name and hash out of the URL, writes the right `.env` lines, and
 tells you which of the four roles are still missing. Pass several URLs at
 once, or run `npm run pin` with no arguments and paste them one per line.
 
+You do not need all four to get something useful. With only **search** and
+**artistOverview** pinned, the site works and shows the artist's top tracks
+with real play counts, and says so; adding **discography** and **album**
+expands that to the full catalogue.
+
 Trigger each role in the web player: **search** by typing in the search box,
 **artistOverview** and **discography** by opening an artist page (then
 "Discography"/"Show all"), and **album** by opening an album — the request

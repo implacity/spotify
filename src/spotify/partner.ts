@@ -598,14 +598,40 @@ export class PartnerClient {
     return [...tracks.values()];
   }
 
-  /** Artist profile without the documented API. */
-  async getArtistProfile(artistId: string): Promise<PartnerArtist | null> {
+  /**
+   * Artist profile plus whatever else the overview carries.
+   *
+   * This one response already includes top tracks with play counts and a
+   * slice of the discography, so it alone is enough for a usable page. That
+   * matters when only some persisted-query hashes are available: the site
+   * degrades to "top tracks" instead of failing outright.
+   */
+  async getArtistOverviewBundle(artistId: string): Promise<{
+    profile: PartnerArtist | null;
+    topTracks: PartnerTrack[];
+    albums: PartnerAlbum[];
+  }> {
     const payload = await this.query(await this.resolveOperation('artistOverview'), {
       uri: `spotify:artist:${artistId}`,
       locale: '',
       includePrerelease: false,
     });
-    return extractArtists(payload).find((artist) => artist.id === artistId) ?? null;
+
+    return {
+      profile: extractArtists(payload).find((artist) => artist.id === artistId) ?? null,
+      topTracks: extractTracks(payload),
+      albums: extractAlbums(payload),
+    };
+  }
+
+  /** True when a role has a usable hash, without throwing if it does not. */
+  async canResolve(key: OperationKey): Promise<boolean> {
+    try {
+      await this.resolveOperation(key);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Play counts for every track on one album. */
