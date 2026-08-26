@@ -102,7 +102,9 @@ export async function discoverPersistedQueries(
   }).then((response) => response.text());
 
   const bundles = extractBundleUrls(html);
-  log.debug(`found ${bundles.length} web-player bundles`);
+  // Logged at info: when discovery fails this is the first thing worth
+  // knowing, and asking for a log-level change first wastes a round trip.
+  log.info(`web player returned ${html.length} bytes, ${bundles.length} script bundles`);
 
   // The player's own HTML sometimes inlines the manifest.
   const discovered: Record<string, string> = extractPersistedQueries(html);
@@ -129,6 +131,15 @@ export async function discoverPersistedQueries(
     }
   });
 
-  log.info(`discovered ${Object.keys(discovered).length} persisted queries`);
+  const names = Object.keys(discovered);
+  log.info(`discovered ${names.length} persisted queries`);
+  if (names.length === 0) {
+    log.warn(
+      'no persisted queries found in the web player. Pin them by hand with ' +
+        'SPOTIFY_PQ_<OPERATION>=<sha256> — see the README.',
+    );
+  } else {
+    log.debug(`operations: ${names.slice(0, 40).join(', ')}`);
+  }
   return discovered;
 }
