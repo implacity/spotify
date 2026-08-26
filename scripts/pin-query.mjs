@@ -24,7 +24,7 @@ const ENV_PATH = resolve(process.cwd(), '.env');
 const KNOWN = {
   artistOverview: ['queryArtistOverview', 'queryArtistOverviewV2', 'getArtistOverview'],
   album: ['getAlbum', 'queryAlbumTracks', 'getAlbumTracks'],
-  search: ['searchArtists', 'searchDesktop', 'searchQuery'],
+  search: ['searchSuggestions', 'searchArtists', 'searchDesktop', 'searchQuery'],
   discography: [
     'queryArtistDiscographyAll',
     'queryArtistDiscographyOverview',

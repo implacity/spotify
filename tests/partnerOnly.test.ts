@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { ArtistService } from '../src/service.js';
+import { searchVariables } from '../src/spotify/partner.js';
 
 /**
  * End-to-end cover for the no-credentials path: search, discography and
@@ -20,7 +21,7 @@ function partnerConfig(overrides: Record<string, string> = {}) {
     // Pinning hashes and a token skips discovery and auth, which are covered
     // separately; this test is about the catalogue assembly.
     SPOTIFY_PARTNER_TOKEN: 'test-token',
-    SPOTIFY_PQ_SEARCHARTISTS: HASH,
+    SPOTIFY_PQ_SEARCHSUGGESTIONS: HASH,
     SPOTIFY_PQ_QUERYARTISTDISCOGRAPHYALL: HASH,
     SPOTIFY_PQ_GETALBUM: HASH,
     SPOTIFY_PQ_QUERYARTISTOVERVIEW: HASH,
@@ -119,7 +120,7 @@ function stubPathfinder(options: { failAlbum?: string } = {}) {
           headers: { 'content-type': 'application/json' },
         });
 
-      if (operation === 'searchArtists') {
+      if (operation === 'searchSuggestions' || operation === 'searchArtists') {
         return json({ data: { searchV2: { artists: { items: [{ data: artistNode }] } } } });
       }
 
@@ -182,6 +183,42 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe('searchVariables', () => {
+  it('matches the shape a live searchSuggestions request sends', () => {
+    // Captured from a real web-player request. Persisted queries validate
+    // variables against the stored document, so an undeclared extra is
+    // rejected outright — this set has to stay exact.
+    expect(searchVariables('searchSuggestions', 'bladee', 30)).toEqual({
+      query: 'bladee',
+      limit: 30,
+      numberOfTopResults: 30,
+      offset: 0,
+      includeAuthors: true,
+      includeAlbumPreReleases: false,
+      includeEpisodeContentRatingsV2: true,
+    });
+  });
+
+  it('never mixes searchTerm into searchSuggestions', () => {
+    // Sending both keys would fail validation on whichever is undeclared.
+    expect(searchVariables('searchSuggestions', 'x', 5)).not.toHaveProperty('searchTerm');
+    expect(searchVariables('searchDesktop', 'x', 5)).not.toHaveProperty('query');
+  });
+
+  it('uses searchTerm for the older desktop spellings', () => {
+    expect(searchVariables('searchDesktop', 'bladee', 10)).toMatchObject({
+      searchTerm: 'bladee',
+      limit: 10,
+    });
+    expect(searchVariables('searchArtists', 'bladee', 10)).toMatchObject({ searchTerm: 'bladee' });
+  });
+
+  it('falls back to sending both term keys for an unknown operation', () => {
+    const variables = searchVariables('searchSomethingNew', 'bladee', 10);
+    expect(variables).toMatchObject({ query: 'bladee', searchTerm: 'bladee' });
+  });
 });
 
 describe('source selection', () => {
@@ -322,7 +359,7 @@ describe('search without credentials', () => {
 
     const call = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
     const url = new URL(String(call[0]));
-    expect(JSON.parse(url.searchParams.get('variables')!).searchTerm).toBe('bladee');
+    expect(JSON.parse(url.searchParams.get('variables')!).query).toBe('bladee');
     expect(JSON.parse(url.searchParams.get('extensions')!).persistedQuery.sha256Hash).toBe(HASH);
 
     const headers = (call[1] as RequestInit).headers as Record<string, string>;

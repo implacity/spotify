@@ -35,7 +35,7 @@ const USER_AGENT =
 export const OPERATION_CANDIDATES = {
   artistOverview: ['queryArtistOverview', 'queryArtistOverviewV2', 'getArtistOverview'],
   album: ['getAlbum', 'queryAlbumTracks', 'getAlbumTracks'],
-  search: ['searchArtists', 'searchDesktop', 'searchQuery'],
+  search: ['searchSuggestions', 'searchArtists', 'searchDesktop', 'searchQuery'],
   discography: [
     'queryArtistDiscographyAll',
     'queryArtistDiscographyOverview',
@@ -168,6 +168,50 @@ export function findValue(payload: unknown, key: string): unknown {
   }
 
   return undefined;
+}
+
+/**
+ * Variables for a search operation.
+ *
+ * Persisted queries validate their variables against the stored document, so
+ * an undeclared extra is rejected rather than ignored. Each operation
+ * therefore gets the exact set the web player sends for it; the fallback is a
+ * best guess for a spelling we have not seen.
+ *
+ * The `searchSuggestions` shape below is copied from a live request.
+ */
+export function searchVariables(
+  operation: string,
+  query: string,
+  limit: number,
+): Record<string, unknown> {
+  switch (operation) {
+    case 'searchSuggestions':
+      return {
+        query,
+        limit,
+        numberOfTopResults: limit,
+        offset: 0,
+        includeAuthors: true,
+        includeAlbumPreReleases: false,
+        includeEpisodeContentRatingsV2: true,
+      };
+    case 'searchDesktop':
+    case 'searchQuery':
+      return {
+        searchTerm: query,
+        offset: 0,
+        limit,
+        numberOfTopResults: limit,
+        includeAudiobooks: true,
+      };
+    case 'searchArtists':
+      return { searchTerm: query, offset: 0, limit, numberOfTopResults: limit };
+    default:
+      // Unknown spelling: send the two most common term keys and hope one of
+      // them is what the document declares.
+      return { query, searchTerm: query, offset: 0, limit, numberOfTopResults: limit };
+  }
 }
 
 export class PartnerUnavailableError extends Error {
@@ -501,16 +545,7 @@ export class PartnerClient {
    */
   async searchArtists(query: string, limit = 20): Promise<PartnerArtist[]> {
     const operation = await this.resolveOperation('search');
-    const payload = await this.query(operation, {
-      searchTerm: query,
-      // Different search operations name the term differently; send both.
-      query,
-      offset: 0,
-      limit,
-      numberOfTopResults: limit,
-      includeAudiobooks: false,
-      includePreReleases: false,
-    });
+    const payload = await this.query(operation, searchVariables(operation, query, limit));
     return extractArtists(payload).slice(0, limit);
   }
 
