@@ -47,7 +47,11 @@ const ROLES = {
 /** Which role an operation serves. Mirrors scripts/pin-query.mjs. */
 function roleFor(name) {
   const lower = name.toLowerCase();
-  if (/(merch|credit|prerelease|video|canvas|autoplay|recommend|watch|clip)/.test(lower)) return null;
+  // `recentSearches` is the history list, not a search; `home` and playlist
+  // metadata match nothing we need either.
+  if (/(merch|credit|prerelease|video|canvas|autoplay|recommend|watch|clip|recent|history|playlist)/.test(lower)) {
+    return null;
+  }
   if (lower.includes('search')) return 'search';
   if (lower.includes('discograph')) return 'discography';
   if (lower.includes('album')) return 'album';
@@ -230,7 +234,33 @@ if (artistId) {
   // lose them.
   let albumId = ALBUM || (await findAlbumId());
 
-  await visit(`/artist/${artistId}/discography/all`, 'full discography');
+  // The discography lives behind a "Show all" control whose route has moved
+  // more than once, so try the known forms and then fall back to clicking
+  // whatever discography link the artist page actually renders.
+  const haveDiscography = () => [...seen.values()].some((entry) => entry.role === 'discography');
+
+  for (const suffix of ['/discography/all', '/discography/album', '/discography/single']) {
+    if (haveDiscography()) break;
+    await visit(`/artist/${artistId}${suffix}`, `discography ${suffix}`);
+  }
+
+  if (!haveDiscography()) {
+    console.log('\n→ clicking through to the discography');
+    try {
+      await page.goto(`${BASE}/artist/${artistId}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
+      await settle();
+      const link = page.locator('a[href*="/discography"]').first();
+      if (await link.count()) {
+        await link.click({ timeout: 10_000 });
+        await settle(4000);
+      } else {
+        console.log('  (no discography link on the artist page)');
+      }
+    } catch (error) {
+      console.log(`  (${error.message.split('\n')[0]})`);
+    }
+  }
+
   if (!albumId) albumId = await findAlbumId();
 
   if (albumId) await visit(`/album/${albumId}`, `album page ${albumId}`);

@@ -37,7 +37,11 @@ function roleFor(name) {
   const lower = name.toLowerCase();
   // Merch, credits, prerelease and similar share the "album"/"artist" prefix
   // but carry none of the data this project needs.
-  if (/(merch|credit|prerelease|video|canvas|autoplay|recommend)/.test(lower)) return null;
+  // `recentSearches` is the history list, not a search; `home` and playlist
+  // metadata match nothing we need either.
+  if (/(merch|credit|prerelease|video|canvas|autoplay|recommend|watch|clip|recent|history|playlist)/.test(lower)) {
+    return null;
+  }
   if (lower.includes('search')) return 'search';
   if (lower.includes('discograph')) return 'discography';
   if (lower.includes('album')) return 'album';
