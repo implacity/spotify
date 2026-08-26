@@ -41,7 +41,11 @@ So the app runs in one of two modes, chosen automatically:
   strictly more informative.
 
 Force one with `SPOTIFY_SOURCE=official|partner`; the default `auto` picks
-`official` when credentials exist and `partner` otherwise. Either way, if the
+`official` when credentials exist and `partner` otherwise — and if the Web API
+then refuses for lack of a Premium subscription, `auto` switches to `partner`
+for the rest of the process rather than failing. So leaving unusable
+credentials in `.env` costs you one 403, not a broken site. `/api/health`
+reports `officialBlocked` when that has happened. Either way, if the
 play-count source is unreachable the page still renders and says so rather
 than failing.
 

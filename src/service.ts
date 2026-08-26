@@ -9,7 +9,7 @@ import {
   groupDuplicateTracks,
   type CatalogOptions,
 } from './spotify/catalog.js';
-import { OfficialClient } from './spotify/official.js';
+import { OfficialClient, SubscriptionRequiredError } from './spotify/official.js';
 import { PartnerClient } from './spotify/partner.js';
 import { PartnerCatalogService } from './spotify/partnerCatalog.js';
 import type { ArtistCatalog, ArtistSummary, ProgressReporter } from './spotify/types.js';
@@ -53,16 +53,53 @@ export class ArtistService {
   }
 
   /**
+   * Set once the documented API has told us the app owner lacks Premium.
+   * That verdict does not change within a process lifetime, so there is no
+   * point re-asking on every request.
+   */
+  private officialBlocked = false;
+
+  /**
    * Which backend serves this request.
    *
-   * `auto` prefers the documented API but falls back to the web player when
-   * there are no credentials — Spotify requires Premium on the app owner for
-   * Web API access, so running without credentials is a normal case, not an
-   * error.
+   * `auto` prefers the documented API, but only while it can actually answer.
+   * Spotify requires Premium on the app owner for any Web API access, so
+   * having credentials is no guarantee they work — and a user in that
+   * position should get a working site, not a dead one.
    */
   get activeSource(): 'official' | 'partner' {
     if (this.config.source !== 'auto') return this.config.source;
+    if (this.officialBlocked) return 'partner';
     return this.official.configured ? 'official' : 'partner';
+  }
+
+  /**
+   * Run `attempt` against the chosen source; if the documented API refuses on
+   * subscription grounds and we are in `auto`, switch to the web player and
+   * retry rather than failing the request.
+   */
+  private async withFallback<T>(
+    attempt: (source: 'official' | 'partner') => Promise<T>,
+  ): Promise<T> {
+    const source = this.activeSource;
+    try {
+      return await attempt(source);
+    } catch (error) {
+      const canFallBack =
+        error instanceof SubscriptionRequiredError &&
+        this.config.source === 'auto' &&
+        source === 'official' &&
+        this.partner.enabled;
+
+      if (!canFallBack) throw error;
+
+      this.officialBlocked = true;
+      log.warn(
+        'Web API refused: the app owner has no active Premium subscription. ' +
+          'Falling back to the web-player source for the rest of this process.',
+      );
+      return attempt('partner');
+    }
   }
 
   get mock(): boolean {
@@ -95,8 +132,8 @@ export class ArtistService {
     if (this.config.mock) return mockSearch(trimmed).slice(0, limit);
 
     this.assertConfigured();
-    const source = this.activeSource;
-    return this.cache.wrap(
+    return this.withFallback((source) =>
+      this.cache.wrap(
       `search:${source}:${trimmed.toLowerCase()}:${limit}`,
       this.config.cache.searchTtl,
       async () => {
@@ -115,6 +152,7 @@ export class ArtistService {
         }
         return this.official.searchArtists(trimmed, limit);
       },
+      ),
     );
   }
 
@@ -135,7 +173,9 @@ export class ArtistService {
     if (forceRefresh) await this.cache.invalidate(key);
 
     // Cache the ungrouped catalogue; grouping is a cheap view transform.
-    const base = await this.buildBase(artistId, resolved, onProgress, forceRefresh, key);
+    const base = await this.withFallback((source) =>
+      this.buildBase(artistId, resolved, onProgress, forceRefresh, catalogKey(artistId, resolved, source), source),
+    );
     return this.applyGrouping(base, resolved);
   }
 
@@ -145,6 +185,7 @@ export class ArtistService {
     onProgress: ProgressReporter,
     forceRefresh: boolean,
     key: string,
+    source: 'official' | 'partner',
   ): Promise<ArtistCatalog> {
     if (this.config.mock) {
       const mock = buildMockCatalog(artistId);
@@ -168,7 +209,7 @@ export class ArtistService {
 
     return this.cache.wrap(key, this.config.cache.artistTtl, () =>
       // Store ungrouped so both views come from one build.
-      this.activeSource === 'partner'
+      source === 'partner'
         ? this.partnerCatalog.build(artistId, onProgress)
         : this.catalog.build(artistId, { ...options, groupDuplicates: false }, onProgress),
     );
@@ -187,6 +228,8 @@ export class ArtistService {
       mock: this.config.mock,
       activeSource: this.config.mock ? 'mock' : this.activeSource,
       officialConfigured: this.official.configured,
+      /** True once the Web API refused for lack of a Premium subscription. */
+      officialBlocked: this.officialBlocked,
       partner: this.partner.status,
       cacheEntries: this.cache.size,
     };

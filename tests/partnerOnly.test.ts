@@ -215,6 +215,92 @@ describe('source selection', () => {
   });
 });
 
+describe('falling back when the app owner has no Premium', () => {
+  const PREMIUM_403 =
+    'Active premium subscription required for the owner of the app. When the ' +
+    'subscription status changes, it can take a few hours before requests are allowed again.';
+
+  /** Web API always 403s on subscription; the web player answers normally. */
+  function stubPremiumRefusal() {
+    const base = stubPathfinder();
+    const pathfinder = globalThis.fetch as unknown as (input: RequestInfo | URL) => Promise<Response>;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes('accounts.spotify.com')) {
+          return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        if (url.includes('api.spotify.com')) return new Response(PREMIUM_403, { status: 403 });
+        return pathfinder(input);
+      }),
+    );
+    return base;
+  }
+
+  const withCredentials = () =>
+    partnerConfig({
+      SPOTIFY_SOURCE: 'auto',
+      SPOTIFY_CLIENT_ID: 'id',
+      SPOTIFY_CLIENT_SECRET: 'secret',
+    });
+
+  it('starts on the documented API when credentials are present', () => {
+    expect(new ArtistService(withCredentials()).activeSource).toBe('official');
+  });
+
+  it('serves search from the web player instead of failing', async () => {
+    stubPremiumRefusal();
+    const service = new ArtistService(withCredentials());
+
+    const artists = await service.search('bladee');
+
+    expect(artists[0]).toMatchObject({ name: 'Bladee' });
+    expect(service.activeSource).toBe('partner');
+    expect(service.status().officialBlocked).toBe(true);
+  });
+
+  it('serves a full catalogue after falling back', async () => {
+    stubPremiumRefusal();
+    const catalog = await new ArtistService(withCredentials()).getCatalog(ARTIST, {
+      groupDuplicates: false,
+    });
+
+    expect(catalog.artist.name).toBe('Bladee');
+    expect(catalog.tracks.length).toBeGreaterThan(0);
+  });
+
+  it('does not retry the Web API once it has refused', async () => {
+    stubPremiumRefusal();
+    const service = new ArtistService(withCredentials());
+    await service.search('bladee');
+
+    const before = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.length;
+    await service.search('ecco');
+    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+
+    // The second search must not touch api.spotify.com again.
+    expect(calls.slice(before).some(([url]) => String(url).includes('api.spotify.com'))).toBe(false);
+  });
+
+  it('does not fall back when the source is pinned to official', async () => {
+    stubPremiumRefusal();
+    const service = new ArtistService(
+      partnerConfig({
+        SPOTIFY_SOURCE: 'official',
+        SPOTIFY_CLIENT_ID: 'id',
+        SPOTIFY_CLIENT_SECRET: 'secret',
+      }),
+    );
+    // An explicit choice is honoured, error and all.
+    await expect(service.search('bladee')).rejects.toThrow(/Premium subscription/i);
+  });
+});
+
 describe('search without credentials', () => {
   it('returns artists from the web player', async () => {
     stubPathfinder();
