@@ -16,7 +16,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "node scripts/smoke.mjs",
-    "start:mock": "node dist/index.js --mock"
+    "start:mock": "node dist/index.js --mock",
+    "pin": "node scripts/pin-query.mjs"
   },
   "dependencies": {
     "@types/compression": "^1.8.1",

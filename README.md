@@ -161,7 +161,23 @@ SPOTIFY_PQ_SEARCHARTISTS=<sha256>
 SPOTIFY_PQ_QUERYARTISTDISCOGRAPHYALL=<sha256>
 ```
 
-Copy those from a `pathfinder` request in your browser's network tab.
+Rather than transcribing 64-character hashes by hand, paste the request URL:
+
+```bash
+npm run pin -- "<url>"
+```
+
+In devtools, open the **Network** tab, filter for `pathfinder`, right-click a
+request and choose **Copy → Copy link address**. The helper reads the
+operation name and hash out of the URL, writes the right `.env` lines, and
+tells you which of the four roles are still missing. Pass several URLs at
+once, or run `npm run pin` with no arguments and paste them one per line.
+
+Trigger each role in the web player: **search** by typing in the search box,
+**artistOverview** and **discography** by opening an artist page (then
+"Discography"/"Show all"), and **album** by opening an album — the request
+listing tracks, not `queryAlbumMerch`, which carries merchandise and is
+ignored.
 
 **Operation names** also change between releases, so each role has a list of
 candidate spellings and the first one with a resolvable hash wins. Pin one
