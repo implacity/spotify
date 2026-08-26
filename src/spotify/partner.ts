@@ -444,6 +444,11 @@ export class PartnerClient {
    * so a Spotify rename falls through to the next spelling instead of failing.
    */
   private async resolveOperation(key: OperationKey): Promise<string> {
+    // Get the token first. Without it no hash is of any use, and if Spotify
+    // has refused this route on policy grounds the caller deserves to hear
+    // that rather than an instruction to go and pin more hashes.
+    await this.accessToken();
+
     const pinned = this.config.partner.operations[key];
     const candidates = pinned ? [pinned, ...OPERATION_CANDIDATES[key]] : [...OPERATION_CANDIDATES[key]];
 
